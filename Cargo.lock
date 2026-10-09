@@ -876,6 +876,7 @@ dependencies = [
  "eframe",
  "egui",
  "image",
+ "labs-updater",
  "log",
  "rfd",
  "serde_json",
@@ -2288,6 +2289,14 @@ dependencies = [
  "polycool",
  "serde",
  "smallvec",
+]
+
+[[package]]
+name = "labs-updater"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "serde_json",
 ]
 
 [[package]]
