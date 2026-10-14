@@ -19,8 +19,8 @@ struct App(SlideApp);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Proddyt Switch: asks to update from the fork's releases (LABS-156).
-        labs_updater::frame(ctx, "deck-labs", "Deck Labs");
+        // Proddyt Studio: asks to update from the fork's releases (LABS-156).
+        labs_updater::frame(ctx, "deck-labs", "Studio Deck");
         self.0.logic(ctx);
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
