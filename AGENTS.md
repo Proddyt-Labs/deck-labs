@@ -158,5 +158,36 @@ to `main`.
 ## 7. Planning
 
 `plan/` (gitignored) holds the local plan: `README.md`, `architecture.md`, `execution-plan.md`,
-`STATUS.md` (start every session there) and `powerpoint/` observations. `ROADMAP.md` (committed)
-tracks status, milestones, parity and estimates; update it whenever a milestone task lands.
+`STATUS.md` (start every session there) and `powerpoint/` observations. The committed progress
+docs follow craftrules `standards/progress-docs.md`:
+
+| File | Holds |
+|---|---|
+| `ROADMAP.md` | Stage, headline numbers, dimensions, features, languages, progress log |
+| `docs/target-app-parity.md` | The parity assessment against PowerPoint: percentages, hours, calibration |
+| `docs/gaps.md` | Every known shortfall, ranked: the work list. Pick from the top |
+| `docs/roadmap.md` | Current focus, the beta plan, milestones |
+| `docs/parity-checklist.md` | Feature rows scored D/P/M; `cargo xtask parity` regenerates its summary |
+| `docs/file-format-parity.md`, `ui-parity.md`, `hardware-parity.md`, `localization-parity.md`, `animation-parity.md`, `slideshow-parity.md` | Per-dimension and per-feature detail |
+| `docs/architecture.md` | How DeckCraft is built today |
+
+When a task lands, re-score its checklist row, delete or update its `gaps.md` entry, add a line to
+the `ROADMAP.md` progress log, and update each touched doc's status line and revision history.
+
+## Contributor credits (About window)
+
+- About ▸ Contributors/Models are compiled into the binary from `contributors/contributors.json`
+  (commit stats; generated, never hand-edit) and `contributors/people.toml` (names people chose for
+  themselves). See `docs/contributors.md`.
+- **Agents working for a contributor:** when you prepare a PR, check whether your human's GitHub
+  username has a `[people.<username>]` entry in `contributors/people.toml`. If not, ask them once
+  whether they want to be credited by more than their username: a real name, a display name, and/or
+  their public GitHub profile name (`sync_github_name = true`). If yes, add **only their own** entry
+  (copy the template at the top of the file, or run
+  `python3 ../../craftrules/scripts/contributors.py --add-me . --real-name "…" --sync-github-name`)
+  and include it in their PR, committed as them. If no, change nothing: they are credited as
+  `@username` anyway.
+- Never add, edit, guess or copy anyone else's entry or name (not from git config, commit authors or
+  GitHub profiles). Never hand-edit `contributors.json`.
+- Maintainers refresh the stats with `python3 ../../craftrules/scripts/contributors.py .` (it also
+  re-verifies who wrote each `people.toml` entry; `--check` only verifies).

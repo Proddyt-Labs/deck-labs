@@ -16,6 +16,7 @@ pub fn default_gradient(base: ColorRef, angle: f64) -> Gradient {
     let mut dark = base.clone();
     dark.mods.push(ColorTransform::LumMod(60_000));
     Gradient {
+        tile: [0.0; 4],
         stops: vec![GradientStop { pos: 0.0, color: base }, GradientStop { pos: 1.0, color: dark }],
         shape: GradientShape::Linear { angle, scaled: false },
         rotate_with_shape: true,
@@ -136,6 +137,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
                 ..default_gradient(base.clone(), 45.0)
             },
             Gradient {
+                tile: [0.0; 4],
                 stops: vec![GradientStop { pos: 0.0, color: light }, GradientStop { pos: 1.0, color: dark }],
                 shape: GradientShape::Path { path: "circle".into(), focus: [0.5, 0.5, 0.5, 0.5] },
                 rotate_with_shape: true,
@@ -276,7 +278,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
             let (sw, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
             ui.painter().rect(sw, CornerRadius::same(3), c32(&s.color, sc), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
             let r = widgets::drop_button(ui, "", vec2(24.0, 20.0), true);
-            egui::Popup::menu(&r).show(|ui| {
+            widgets::color_popup(&r).show(|ui| {
                 if let Some(Some(c)) = widgets::color_grid(ui, sc, None) {
                     let mut ng = g.clone();
                     ng.stops[sel].color = with_alpha(c, alpha_of(&s.color));

@@ -28,7 +28,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             add
         ),
-        cmd!("animation.remove", "Remove Animation", ["Animation Pane"], None, "{index} | {ids?} (all of the shapes' animations)", has_slide, remove),
+        cmd!("animation.remove", "Remove Animation", ["Animation Pane"], None, "{index} | {ids? (all of the shapes' animations)}", has_slide, remove),
         cmd!("animation.move", "Reorder Animation", ["Animations", "Timing"], None, "{index, to}", has_slide, move_anim),
         cmd!(
             "animation.timing",
@@ -49,6 +49,16 @@ pub fn specs() -> Vec<CommandSpec> {
             options
         ),
         cmd!("animation.clear", "Remove All Animations", [], None, "{index?: slide}", has_slide, clear),
+        cmd!(
+            noundo "animation.painter",
+            "Animation Painter",
+            ["Animations", "Advanced Animation"],
+            Some("Alt+Shift+C"),
+            "{sticky?: bool, id?}",
+            has_selection,
+            painter_pick
+        ),
+        cmd!("animation.painterApply", "Apply Animation", [], Some("Alt+Shift+V"), "{ids?}", has_selection, painter_apply),
         cmd!(query "animation.list", "Animation Gallery", [], None, "{} → [{id, label, class, options}]", always, list),
         cmd!(query "animation.get", "Animations on Slide", [], None, "{slide?} → [animation]", has_slide, get),
     ]
@@ -72,6 +82,51 @@ fn start_of(s: &str) -> AnimStart {
     }
 }
 
+/// The effect option `given` as one of `allowed`. Besides the stored codes ("b", "lt", "u", …)
+/// it takes the direction words people type: "fromBottom", "bottom", "fromTopLeft",
+/// "upRight". `None` when it matches none of them: the renderer reads direction codes letter
+/// by letter, so an unchecked "fromBottom" would fly in from the right and the bottom.
+fn resolve_option(allowed: &[&str], given: &str) -> Option<String> {
+    if allowed.is_empty() || allowed.contains(&given) {
+        return Some(given.to_string());
+    }
+    let low = given.to_ascii_lowercase();
+    if let Some(o) = allowed.iter().find(|o| o.to_ascii_lowercase() == low) {
+        return Some(o.to_string());
+    }
+    let mut rest = low.strip_prefix("from").unwrap_or(&low).trim_start_matches(['-', '_', ' ']);
+    // Direction words in order, each as both its edge letter and its arrow letter.
+    let mut dirs: Vec<(char, char)> = Vec::new();
+    while !rest.is_empty() {
+        let words: [(&str, (char, char)); 8] = [
+            ("bottom", ('b', 'd')),
+            ("down", ('b', 'd')),
+            ("top", ('t', 'u')),
+            ("up", ('t', 'u')),
+            ("left", ('l', 'l')),
+            ("right", ('r', 'r')),
+            ("-", ('-', '-')),
+            ("_", ('-', '-')),
+        ];
+        let (w, d) = words.iter().find(|(w, _)| rest.starts_with(w))?;
+        if d.0 != '-' {
+            dirs.push(*d);
+        }
+        rest = &rest[w.len()..];
+    }
+    if dirs.is_empty() || dirs.len() > 2 {
+        return None;
+    }
+    let mut cands: Vec<String> = Vec::new();
+    for pick in [|d: &(char, char)| d.0, |d: &(char, char)| d.1] {
+        let code: String = dirs.iter().map(pick).collect();
+        let rev: String = code.chars().rev().collect();
+        cands.push(code);
+        cands.push(rev);
+    }
+    cands.into_iter().find(|c| allowed.contains(&c.as_str()))
+}
+
 fn build(p: &Value) -> Result<Animation> {
     let effect = str_param(p, "effect").ok_or_else(|| bad("animation", "missing `effect`"))?;
     let class = class_of(str_param(p, "class"));
@@ -83,7 +138,12 @@ fn build(p: &Value) -> Result<Animation> {
     let mut a = Animation {
         class: info.2,
         effect: info.0.to_string(),
-        option: str_param(p, "option").map(String::from).or_else(|| info.5.first().map(|o| o.to_string())).unwrap_or_default(),
+        option: match str_param(p, "option") {
+            Some(o) => {
+                resolve_option(info.5, o).ok_or_else(|| bad("animation", format!("option `{o}` is not one of {:?} for `{}`", info.5, info.0)))?
+            }
+            None => info.5.first().map(|o| o.to_string()).unwrap_or_default(),
+        },
         duration_ms: p.get("duration").and_then(Value::as_u64).map(|v| v.min(600_000) as u32).unwrap_or(info.4),
         delay_ms: p.get("delay").and_then(Value::as_u64).map(|v| v.min(600_000) as u32).unwrap_or(0),
         preset_id: Some(info.3),
@@ -117,7 +177,7 @@ pub fn default_path(effect: &str, option: &str) -> String {
         "turns" => format!("M 0 0 L {} {} C {} {} {dx} {} {dx} {dy} E", dx * 0.5, dy * 0.5, dx, dy * 0.5, dy * 0.75),
         "shapes" => "M 0 0 C 0.1 0 0.1 0.15 0 0.15 C -0.1 0.15 -0.1 0 0 0 Z E".into(),
         "loops" => "M 0 0 C 0.1 -0.1 0.2 0.1 0.1 0.1 C 0 0.1 0.1 -0.1 0.25 0 E".into(),
-        _ => format!("M 0 0 L {dx} {dy} E"),
+        other => deckcraft_model::anim::preset_path(other).unwrap_or_else(|| format!("M 0 0 L {dx} {dy} E")),
     }
 }
 
@@ -260,9 +320,14 @@ fn options(s: &mut Session, p: &Value) -> Result<Value> {
     });
     each_target(s, p, |a| {
         if let Some(o) = &option {
-            a.option = o.clone();
-            if a.class == AnimClass::Path {
-                a.path = Some(default_path(&a.effect, o));
+            // Each target takes the option in its own effect's terms; one it has no such
+            // option for keeps its own.
+            let allowed = animation_info(&a.effect, a.class).map(|i| i.5).unwrap_or(&[]);
+            if let Some(o) = resolve_option(allowed, o) {
+                if a.class == AnimClass::Path {
+                    a.path = Some(default_path(&a.effect, &o));
+                }
+                a.option = o;
             }
         }
         if let Some(b) = build_mode {
@@ -291,4 +356,173 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
     let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
     let sl = st.doc.slides.get(i).ok_or_else(|| bad("animation.get", "no such slide"))?;
     Ok(serde_json::to_value(&sl.animations).unwrap_or_default())
+}
+
+fn painter_pick(s: &mut Session, p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let id = id_param(p, "id", "animation.painter")?
+        .or_else(|| st.selection.shapes.first().copied())
+        .ok_or_else(|| bad("animation.painter", "select an animated shape first"))?;
+    let sl = st.current_slide().ok_or_else(|| bad("animation.painter", "no slide"))?;
+    let anims: Vec<Animation> = sl.animations.iter().filter(|a| a.shape == id).cloned().collect();
+    if anims.is_empty() {
+        return Err(bad("animation.painter", format!("shape {id} has no animations to copy")));
+    }
+    let sticky = bool_or(p, "sticky", false);
+    let count = anims.len();
+    s.anim_painter = Some((anims, sticky));
+    Ok(json!({"armed": true, "count": count}))
+}
+
+fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
+    let Some((painted, sticky)) = s.anim_painter.clone() else {
+        return Err(bad("animation.painterApply", "pick animations with the Animation Painter first"));
+    };
+    if !sticky {
+        s.anim_painter = None;
+    }
+    let ids = targets(s, p)?;
+    if ids.is_empty() {
+        return Err(bad("animation.painterApply", "no target shapes selected"));
+    }
+    s.edit(|doc, sel| {
+        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.painterApply", "no slide"))?);
+        // As in PowerPoint, painting replaces the target's own animations (painting a shape onto
+        // itself doesn't double them). A paragraph effect keeps its paragraph only if the target
+        // has that paragraph; otherwise it animates the whole shape.
+        sl.animations.retain(|a| !ids.contains(&a.shape));
+        let mut added = 0;
+        for id in &ids {
+            let paras = deckcraft_model::find_shape(&sl.shapes, *id).and_then(|sh| sh.text.as_ref()).map_or(0, |t| t.paragraphs.len());
+            for a in &painted {
+                let mut cloned = a.clone();
+                cloned.shape = *id;
+                if cloned.paragraph.is_some_and(|i| i as usize >= paras) {
+                    cloned.paragraph = None;
+                }
+                sl.animations.push(cloned);
+                added += 1;
+            }
+        }
+        Ok(json!({"applied": added}))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_option;
+
+    #[test]
+    fn direction_words_resolve_to_codes() {
+        let fly = &["b", "lb", "l", "lt", "t", "rt", "r", "rb"][..];
+        assert_eq!(resolve_option(fly, "fromBottom").as_deref(), Some("b"));
+        assert_eq!(resolve_option(fly, "bottom").as_deref(), Some("b"));
+        assert_eq!(resolve_option(fly, "fromTopLeft").as_deref(), Some("lt"));
+        assert_eq!(resolve_option(fly, "fromBottomRight").as_deref(), Some("rb"));
+        assert_eq!(resolve_option(fly, "lt").as_deref(), Some("lt"));
+        assert_eq!(resolve_option(fly, "sideways"), None);
+        assert_eq!(resolve_option(fly, "fromBottomTopLeft"), None);
+        let wipe = &["r", "l", "u", "d", "ru", "lu", "rd", "ld"][..];
+        assert_eq!(resolve_option(wipe, "fromBottom").as_deref(), Some("d"));
+        assert_eq!(resolve_option(wipe, "upRight").as_deref(), Some("ru"));
+        let split = &["horzIn", "horzOut", "vertIn", "vertOut"][..];
+        assert_eq!(resolve_option(split, "HorzIn").as_deref(), Some("horzIn"));
+        assert_eq!(resolve_option(&[], "anything").as_deref(), Some("anything"));
+    }
+
+    use super::*;
+
+    #[test]
+    fn animation_painter_copies_effects_between_shapes() {
+        let mut s = Session::with_new();
+        // Insert two shapes
+        let s1 = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id1 = s1.get("id").unwrap().as_u64().unwrap();
+        let s2 = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [150.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id2 = s2.get("id").unwrap().as_u64().unwrap();
+
+        // Add 2 animations to shape 1: fade (entrance) and spin (emphasis)
+        s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id1]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "spin", "class": "emphasis", "ids": [id1]})).unwrap();
+
+        // Shape 2 initially has no animations
+        let anims_before = s.execute("animation.get", &json!({})).unwrap();
+        let arr_before = anims_before.as_array().unwrap();
+        assert_eq!(arr_before.len(), 2);
+        assert!(arr_before.iter().all(|a| a.get("shape").unwrap().as_u64().unwrap() == id1));
+
+        // Pick animations from shape 1
+        s.select(|_, sel| {
+            sel.shapes = vec![deckcraft_model::ShapeId(id1 as u32)];
+        })
+        .unwrap();
+        let res = s.execute("animation.painter", &json!({})).unwrap();
+        assert_eq!(res.get("armed").unwrap().as_bool(), Some(true));
+        assert_eq!(res.get("count").unwrap().as_u64(), Some(2));
+        assert!(s.anim_painter.is_some());
+
+        // Apply animations to shape 2
+        s.select(|_, sel| {
+            sel.shapes = vec![deckcraft_model::ShapeId(id2 as u32)];
+        })
+        .unwrap();
+        let applied = s.execute("animation.painterApply", &json!({})).unwrap();
+        assert_eq!(applied.get("applied").unwrap().as_u64(), Some(2));
+
+        // Single-click should disarm the painter
+        assert!(s.anim_painter.is_none());
+
+        // Painting again replaces shape 2's animations instead of adding to them; undo restores.
+        s.execute("animation.painter", &json!({"id": id1})).unwrap();
+        s.execute("animation.painterApply", &json!({"ids": [id2]})).unwrap();
+        let count_on = |s: &mut Session, id: u64| {
+            let all = s.execute("animation.get", &json!({})).unwrap();
+            all.as_array().unwrap().iter().filter(|a| a.get("shape").unwrap().as_u64().unwrap() == id).count()
+        };
+        assert_eq!(count_on(&mut s, id2), 2);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(count_on(&mut s, id2), 2, "undo restores the first painting");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(count_on(&mut s, id2), 0, "undo removes the painted animations");
+        s.execute("edit.redo", &json!({})).unwrap();
+
+        // Verify shape 2 now has the 2 animations cloned
+        let anims_after = s.execute("animation.get", &json!({})).unwrap();
+        let arr_after = anims_after.as_array().unwrap();
+        assert_eq!(arr_after.len(), 4);
+        let s2_anims: Vec<_> = arr_after.iter().filter(|a| a.get("shape").unwrap().as_u64().unwrap() == id2).collect();
+        assert_eq!(s2_anims.len(), 2);
+        assert_eq!(s2_anims[0].get("effect").unwrap().as_str(), Some("fade"));
+        assert_eq!(s2_anims[1].get("effect").unwrap().as_str(), Some("spin"));
+
+        // Picking from shape with no animations returns an error
+        s.execute("animation.clear", &json!({})).unwrap();
+        let err = s.execute("animation.painter", &json!({"id": id1}));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn animation_painter_sticky_mode() {
+        let mut s = Session::with_new();
+        let s1 = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id1 = s1.get("id").unwrap().as_u64().unwrap();
+        let s2 = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [150.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id2 = s2.get("id").unwrap().as_u64().unwrap();
+        let s3 = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [300.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id3 = s3.get("id").unwrap().as_u64().unwrap();
+
+        s.execute("animation.add", &json!({"effect": "zoom", "class": "entrance", "ids": [id1]})).unwrap();
+
+        // Pick with sticky = true
+        s.execute("animation.painter", &json!({"id": id1, "sticky": true})).unwrap();
+        assert!(s.anim_painter.is_some());
+
+        // Apply to shape 2 - painter remains armed
+        s.execute("animation.painterApply", &json!({"ids": [id2]})).unwrap();
+        assert!(s.anim_painter.is_some());
+
+        // Apply to shape 3 - painter still armed
+        s.execute("animation.painterApply", &json!({"ids": [id3]})).unwrap();
+        assert!(s.anim_painter.is_some());
+    }
 }

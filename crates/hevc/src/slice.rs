@@ -293,9 +293,9 @@ impl SliceHeader {
             if sh.slice_type != SliceType::I {
                 sh.num_ref_idx = [pps.num_ref_idx_l0_default, if sh.is_b() { pps.num_ref_idx_l1_default } else { 0 }];
                 if r.read_flag()? {
-                    sh.num_ref_idx[0] = r.read_ue()? + 1;
+                    sh.num_ref_idx[0] = r.read_ue_plus(1)?;
                     if sh.is_b() {
-                        sh.num_ref_idx[1] = r.read_ue()? + 1;
+                        sh.num_ref_idx[1] = r.read_ue_plus(1)?;
                     }
                 }
                 ensure!(sh.num_ref_idx[0] <= 15 && sh.num_ref_idx[1] <= 15, "num_ref_idx_active out of range");
@@ -339,7 +339,7 @@ impl SliceHeader {
                 sh.max_num_merge_cand = 5 - five_minus;
             }
             sh.qp_delta = r.read_se()?;
-            let qp = pps.init_qp + sh.qp_delta;
+            let qp = pps.init_qp.checked_add(sh.qp_delta).ok_or_else(|| crate::Error::Invalid("SliceQpY out of range".into()))?;
             let qp_bd = 6 * (sps.bit_depth_luma as i32 - 8);
             ensure!((-qp_bd..=51).contains(&qp), "SliceQpY {qp} out of range");
             if pps.slice_chroma_qp_offsets_present {
@@ -365,10 +365,11 @@ impl SliceHeader {
             let n = r.read_ue()?;
             ensure!(n <= sps.pic_width_in_ctbs() * sps.pic_height_in_ctbs(), "num_entry_point_offsets out of range");
             if n > 0 {
-                let len = r.read_ue()? + 1;
+                let len = r.read_ue_plus(1)?;
                 ensure!(len <= 32, "offset_len_minus1 out of range");
                 for _ in 0..n {
-                    sh.entry_points.push(r.read_bits(len)? + 1);
+                    let off = r.read_bits(len)?.checked_add(1).ok_or_else(|| crate::Error::Invalid("entry_point_offset out of range".into()))?;
+                    sh.entry_points.push(off);
                 }
             }
         }
@@ -391,7 +392,9 @@ fn parse_pwt(r: &mut BitReader, sh: &SliceHeader, sps: &Sps) -> Result<PredWeigh
     ensure!(t.luma_log2_denom <= 7, "luma_log2_weight_denom out of range");
     let chroma = sps.chroma_array_type() != 0;
     if chroma {
-        let d = t.luma_log2_denom as i32 + r.read_se()?;
+        let delta = r.read_se()?;
+        ensure!((-7..=7).contains(&delta), "delta_chroma_log2_weight_denom out of range");
+        let d = t.luma_log2_denom as i32 + delta;
         ensure!((0..=7).contains(&d), "ChromaLog2WeightDenom out of range");
         t.chroma_log2_denom = d as u32;
     }

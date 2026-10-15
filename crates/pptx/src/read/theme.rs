@@ -2,14 +2,22 @@
 
 use deckcraft_color::{ColorScheme, Rgba, SchemeSlot};
 use deckcraft_model::style::{ColorBase, Effects};
-use deckcraft_model::theme::{FontScheme, FontSet, FormatScheme, Theme, default_format};
+use deckcraft_model::theme::{FontScheme, FontSet, FormatScheme, ScriptFont, Theme, default_format};
 
 use super::{Imp, Part, dml};
 use crate::xml::El;
 
 fn font_set(e: Option<&El>) -> FontSet {
     let tf = |n: &str| e.and_then(|e| e.child(n)).and_then(|c| c.attr("typeface")).unwrap_or("").to_string();
-    FontSet { latin: tf("latin"), ea: tf("ea"), cs: tf("cs") }
+    let scripts = e
+        .map(|e| {
+            e.children_named("font")
+                .filter_map(|f| Some(ScriptFont { script: f.attr("script")?.to_string(), typeface: f.attr("typeface").unwrap_or("").to_string() }))
+                .take(256)
+                .collect()
+        })
+        .unwrap_or_default();
+    FontSet { latin: tf("latin"), ea: tf("ea"), cs: tf("cs"), scripts }
 }
 
 pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {
@@ -52,6 +60,9 @@ pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {
                 .take(16)
                 .map(|e| {
                     let mut fx = e.child("effectLst").map(dml::effects).unwrap_or_default();
+                    if let Some(b) = e.path(&["sp3d", "bevelT"]) {
+                        fx.bevel = Some(b.attr("prst").unwrap_or("circle").to_string());
+                    }
                     let raw: String = e.elements().filter(|c| c.is("scene3d") || c.is("sp3d")).map(|c| part.keep(c)).collect();
                     if !raw.is_empty() {
                         fx.raw3d = Some(raw);

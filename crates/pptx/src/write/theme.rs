@@ -13,6 +13,9 @@ fn font_set(w: &mut W, tag: &str, f: &FontSet) {
     w.empty("a:latin", A::new().a("typeface", if f.latin.is_empty() { "Arial" } else { &f.latin }));
     w.empty("a:ea", A::new().a("typeface", &f.ea));
     w.empty("a:cs", A::new().a("typeface", &f.cs));
+    for sf in &f.scripts {
+        w.empty("a:font", A::new().a("script", &sf.script).a("typeface", &sf.typeface));
+    }
     w.close(tag);
 }
 
@@ -80,6 +83,8 @@ pub fn theme_xml(x: &mut Exp, o: &mut Out, t: &Theme) -> Vec<u8> {
         dml::effects(&mut w, e);
         if let Some(raw) = &e.raw3d {
             w.raw(raw);
+        } else if let Some(xml) = e.bevel.as_deref().and_then(dml::bevel_sp3d) {
+            w.raw(&xml);
         }
         w.close("a:effectStyle");
     }

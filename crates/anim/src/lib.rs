@@ -3,8 +3,10 @@
 //! - [`Timeline`]: a slide's animation list grouped into click steps, with per-shape (and
 //!   per-paragraph) [`AnimState`] at any point of the show.
 //! - [`transition_layers`]: a slide transition frame as textured quads of the old/new slide images.
-//! - [`morph_pairs`] / [`morph_xfrm`]: Morph transition shape matching and interpolation.
-//! - [`ShowState`]: slide show navigation (hidden slides, custom shows, loop, timings).
+//! - [`morph_frame`]: a Morph transition frame (shapes matched by [`morph_pairs`], moved by
+//!   [`morph_xfrm`]).
+//! - [`ShowState`]: slide show navigation (hidden slides, custom shows, loop, timings), what was
+//!   played on each visited slide, and what a click does ([`ShowState::click`]).
 //!
 //! Pure logic: no rendering, no UI toolkit. Every function accepts hostile numbers (NaN, huge or
 //! negative times) and never panics.
@@ -13,24 +15,34 @@
 
 mod easing;
 mod effects;
+mod interact;
+mod mesh;
 mod morph;
 mod path;
 mod show;
 mod timeline;
 mod transition;
+mod transition_fx;
+mod transition_geom;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_interact;
+#[cfg(test)]
+mod transition_tests;
 
 pub use deckcraft_model::Rgba;
 use serde::{Deserialize, Serialize};
 
 pub use easing::ease;
-pub use morph::{morph_pairs, morph_xfrm};
+pub use interact::{Click, HitShape, Target};
+pub use mesh::{MeshVertex, layer_mesh};
+pub use morph::{MorphFrame, MorphPath, MorphText, morph_crop, morph_frame, morph_pairs, morph_xfrm};
 pub use path::{MotionPath, default_path};
-pub use show::{ShowAction, ShowState, show_order};
-pub use timeline::{EffectTiming, Sequence, Timeline, TriggerPlay};
-pub use transition::{Layer, Source, transition_layers};
+pub use show::{LinkJump, ShowAction, ShowState, safe_url, show_order};
+pub use timeline::{EffectTiming, Sequence, StepStamp, Timeline, TriggerPlay};
+pub use transition::{DEFAULT_ASPECT, Layer, Source, transition_frame, transition_layers, uses_slide_parts};
 
 /// Animation state of one shape (or one paragraph of a shape's text) at one moment of the show.
 ///
